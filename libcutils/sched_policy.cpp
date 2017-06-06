@@ -59,7 +59,6 @@ static int system_bg_cpuset_fd = -1;
 static int bg_cpuset_fd = -1;
 static int fg_cpuset_fd = -1;
 static int ta_cpuset_fd = -1; // special cpuset for top app
-static int system_bg_schedboost_fd = -1;
 
 // File descriptors open to /dev/stune/../tasks, setup by initialize, or -1 on error
 static int bg_schedboost_fd = -1;
@@ -255,24 +254,26 @@ int get_sched_policy(int tid, SchedPolicy *policy)
 
     char grpBuf[32];
 
-    if (cpusets_enabled()) {
+    grpBuf[0] = '\0';
+    if (schedboost_enabled()) {
+        if (getCGroupSubsys(tid, "schedtune", grpBuf, sizeof(grpBuf)) < 0) return -1;
+    }
+    if ((grpBuf[0] == '\0') && cpusets_enabled()) {
         if (getCGroupSubsys(tid, "cpuset", grpBuf, sizeof(grpBuf)) < 0) return -1;
-        if (grpBuf[0] == '\0') {
-            *policy = SP_FOREGROUND;
-        } else if (!strcmp(grpBuf, "foreground")) {
-            *policy = SP_FOREGROUND;
-        } else if (!strcmp(grpBuf, "background")) {
-            *policy = SP_BACKGROUND;
-        } else if (!strcmp(grpBuf, "top-app")) {
-            *policy = SP_TOP_APP;
-        } else {
-            errno = ERANGE;
-            return -1;
-        }
-    } else {
-        // In b/34193533, we removed bg_non_interactive cgroup, so now
-        // all threads are in FOREGROUND cgroup
+    }
+    if (grpBuf[0] == '\0') {
         *policy = SP_FOREGROUND;
+    } else if (!strcmp(grpBuf, "foreground")) {
+        *policy = SP_FOREGROUND;
+    } else if (!strcmp(grpBuf, "system-background")) {
+        *policy = SP_SYSTEM;
+    } else if (!strcmp(grpBuf, "background")) {
+        *policy = SP_BACKGROUND;
+    } else if (!strcmp(grpBuf, "top-app")) {
+        *policy = SP_TOP_APP;
+    } else {
+        errno = ERANGE;
+        return -1;
     }
     return 0;
 }
@@ -309,7 +310,6 @@ int set_cpuset_policy(int tid, SchedPolicy policy)
         break;
     case SP_SYSTEM:
         fd = system_bg_cpuset_fd;
-        boost_fd = system_bg_schedboost_fd;
         break;
     default:
         boost_fd = fd = -1;
